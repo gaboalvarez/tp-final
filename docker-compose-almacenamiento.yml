@@ -2,6 +2,8 @@ services:
   postgresql-data:
     image: postgres:16
     container_name: data-db
+    env_file:
+    - .env
     environment:
       POSTGRES_DB: ${APP_POSTGRES_DB:-postgres_db}
       POSTGRES_USER: ${APP_POSTGRES_USER:-myuser}
@@ -17,6 +19,8 @@ services:
   pgadmin:
     image: dpage/pgadmin4:latest
     container_name: my_pgadmin
+    env_file:
+    - .env
     environment:
       PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-admin@example.com}
       PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-adminpassword}
@@ -29,15 +33,17 @@ services:
     volumes:
       - pgadmin_data:/var/lib/pgadmin
 
-  data-lake:
+  datalake:
     image: minio/minio
-    container_name: data-lake
+    container_name: ${DATALAKE_CONTAINER_NAME}
     command: server /data --console-address ":9001"
     ports:
       - "7400:9000"
       - "7401:9001"
     volumes:
-      - data-lake:/data
+      - datalake:/data
+    env_file:
+    - .env
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minio}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minio123}
@@ -47,7 +53,7 @@ services:
 
 volumes:
   postgres_data_app:
-  data-lake:
+  datalake:
   pgadmin_data:
 
 networks:
