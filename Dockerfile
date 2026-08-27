@@ -1,4 +1,4 @@
-FROM apache/airflow:2.10.5-python3.12
+FROM apache/airflow:3.0.0-python3.12
 
 RUN pip install boto3 pandas requests psycopg2-binary
 

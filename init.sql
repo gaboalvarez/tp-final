@@ -1,10 +1,10 @@
 DO
 $$
 BEGIN
-   IF NOT EXISTS (SELECT FROM pg_database WHERE datname = 'postgres_db') THEN
-      CREATE DATABASE postgres_db;
+   IF NOT EXISTS (SELECT FROM pg_database WHERE datname = 'datos') THEN
+      CREATE DATABASE datos;
    END IF;
 END
 $$;
 
-\c postgres_db;
+\c datos;

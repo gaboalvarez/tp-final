@@ -3,7 +3,7 @@ import boto3
 from airflow import DAG
 from datetime import datetime
 from io import BytesIO
-from airflow.operators.python import PythonOperator, get_current_context
+from airflow.operators.python import PythonOperator
 import zipfile
 import pandas as pd
 
@@ -25,7 +25,7 @@ def create_bucket_if_not_exists(bucket_name):
         s3_client.create_bucket(Bucket=bucket_name)
         print(f"Bucket {bucket_name} creado.")
 
-def transform_and_save_to_datalake():
+def transform_and_save_to_datalake(**context):
     # Crear el bucket staging si no existe
     create_bucket_if_not_exists(BUCKET_NAME)
     print(f"Bucket {BUCKET_NAME} creado o ya existe.")
@@ -75,7 +75,8 @@ def transform_and_save_to_datalake():
                         print(f"Archivo CSV guardado en: {BUCKET_NAME}/{output_key}")
 
                         # Pasa la ruta por XCom para la siguiente tarea
-                        get_current_context()['ti'].xcom_push(key=f"{dataset_name}_csv_path", value=f"{BUCKET_NAME}/{output_key}")
+                        ti = context['ti']
+                        ti.xcom_push(key=f"{dataset_name}_csv_path", value=f"{BUCKET_NAME}/{output_key}")
         else:
             print(f"Archivo {file} no encontrado en el bucket {raw_bucket}.")
 
