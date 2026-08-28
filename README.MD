@@ -11,3 +11,8 @@ You can run the project using Docker. From the root directory, execute:
 ```
 docker compose up --build
 ```
+
+docker compose up -d
+docker compose -f docker-compose-almacenamiento.yml up -d
+docker compose -f docker-compose-almacenamiento.yml down
+docker compose down
