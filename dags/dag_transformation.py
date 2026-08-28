@@ -81,7 +81,7 @@ def transformar_datos():
 
 dag = DAG(
     'dag_transformacion',
-    description='DAG para transformar datos y particionarlos en MinIO',
+    description='DAG para transformar datos en MinIO',
     schedule=None,
     start_date=datetime(2026, 8, 27),
     catchup=False,
@@ -92,11 +92,5 @@ tarea_transformacion = PythonOperator(
     python_callable=transformar_datos,
     dag=dag,
 )
-
-# tarea_particion = PythonOperator(
-#     task_id='particion',
-#     python_callable=particionar_datos,
-#     dag=dag,
-# )
 
 tarea_transformacion
