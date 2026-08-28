@@ -1,23 +1,24 @@
 import os
 import boto3
+import io
 from airflow import DAG
 from datetime import datetime
 from io import BytesIO
 from airflow.operators.python import PythonOperator
 import zipfile
 import pandas as pd
+import os
+from pathlib import Path
 
-MINIO_ENDPOINT = 'http://data-lake:9000'
-MINIO_ACCESS_KEY = 'minio'
-MINIO_SECRET_KEY = 'minio123'
-BUCKET_NAME = 'staging'
+MINIO_ENDPOINT = f"http://{os.getenv('DATALAKE_CONTAINER_NAME')}:9000"
+MINIO_ACCESS_KEY = os.getenv('MINIO_ROOT_USER')
+MINIO_SECRET_KEY = os.getenv('MINIO_ROOT_PASSWORD')
+AWS_REGION = os.getenv('AWS_DEFAULT_REGION')
+BUCKET_RAW = 'rawdata'
+BUCKET_STAGING = 'staging'
+TXT_PATH = Path(__file__).resolve().parent / "last_execution.txt"
 
-def create_bucket_if_not_exists(bucket_name):
-    s3_client = boto3.client('s3',
-                             endpoint_url=MINIO_ENDPOINT,
-                             aws_access_key_id=MINIO_ACCESS_KEY,
-                             aws_secret_access_key=MINIO_SECRET_KEY,
-                             region_name='us-east-1')
+def crear_verificar_bucket_staging(s3_client,bucket_name):
     try:
         s3_client.head_bucket(Bucket=bucket_name)
         print(f"Bucket {bucket_name} ya existe.")
@@ -25,73 +26,77 @@ def create_bucket_if_not_exists(bucket_name):
         s3_client.create_bucket(Bucket=bucket_name)
         print(f"Bucket {bucket_name} creado.")
 
-def transform_and_save_to_datalake(**context):
-    # Crear el bucket staging si no existe
-    create_bucket_if_not_exists(BUCKET_NAME)
-    print(f"Bucket {BUCKET_NAME} creado o ya existe.")
-
+def transformar_datos():
     s3_client = boto3.client('s3',
                              endpoint_url=MINIO_ENDPOINT,
                              aws_access_key_id=MINIO_ACCESS_KEY,
                              aws_secret_access_key=MINIO_SECRET_KEY,
-                             region_name='us-east-1')
+                             region_name=AWS_REGION)
+    
+    crear_verificar_bucket_staging(s3_client,BUCKET_STAGING)
 
-    # Lee los archivos ZIP desde el bucket rawdata
-    raw_bucket = 'rawdata'
-    objects = s3_client.list_objects_v2(Bucket=raw_bucket)
-    files = {obj['Key'] for obj in objects.get('Contents', [])}
-    print(f"Archivos encontrados en {raw_bucket}: {files}")
+    raw_file_name = TXT_PATH.read_text(encoding="utf-8").strip()
 
-    target_files = {
-        "VendorInvoices12312016csv.zip":"VendorInvoices",
-        "2017PurchasePricesDeccsv.zip": "purchasePrices",
-        "BegInvFINAL12312016csv.zip":"BegInv",
-        "EndInvFINAL12312016csv.zip":"EndInv",
-        "PurchasesFINAL12312016csv.zip":"Purchases",
-        #"SalesFINAL12312016csv.zip": "sales"
-    }
+    raw_object = s3_client.get_object(Bucket=BUCKET_RAW, Key=raw_file_name)
+    df = pd.read_csv(io.BytesIO(raw_object['Body'].read()))
+    print(f"Registros RAW leídos: {len(df)}")
 
-    for file, dataset_name in target_files.items():
-        if file in files:
-            print(f"Procesando archivo: {file}")
-            file_obj = s3_client.get_object(Bucket=raw_bucket, Key=file)
-            zip_content = BytesIO(file_obj['Body'].read())
+    # A. Eliminar nulos en campos primarios
+    df = df.dropna(subset=['uuid', 'email'])
 
-            with zipfile.ZipFile(zip_content, 'r') as zip_ref:
-                for zip_file in zip_ref.namelist():
-                    print(f"Extrayendo archivo del ZIP: {zip_file}")
-                    with zip_ref.open(zip_file) as extracted_file:
-                        df = pd.read_csv(extracted_file)
-                        print(f"DataFrame creado para {dataset_name} con {len(df)} filas.")
-                        csv_buffer = BytesIO()
-                        df.to_csv(csv_buffer, index=False)
-                        csv_buffer.seek(0)
-                        output_key = f"transformed_{dataset_name}.csv"
-                        s3_client.put_object(
-                            Bucket=BUCKET_NAME,
-                            Key=output_key,
-                            Body=csv_buffer.getvalue()
-                        )
-                        print(f"Archivo CSV guardado en: {BUCKET_NAME}/{output_key}")
+    # B. Deduplicar por UUID
+    df = df.drop_duplicates(subset=['uuid'], keep='first')
 
-                        # Pasa la ruta por XCom para la siguiente tarea
-                        ti = context['ti']
-                        ti.xcom_push(key=f"{dataset_name}_csv_path", value=f"{BUCKET_NAME}/{output_key}")
-        else:
-            print(f"Archivo {file} no encontrado en el bucket {raw_bucket}.")
+    # C. Limpieza y estandarización de strings
+    string_cols_title = ['first_name', 'last_name', 'city', 'state', 'country', 'street_name']
+    for col in string_cols_title:
+        if col in df.columns:
+            df[col] = df[col].astype(str).str.strip().str.title()
+
+    df['email'] = df['email'].astype(str).str.strip().str.lower()
+
+    # D. Formateo de fecha de nacimiento (ISO 8601 a YYYY-MM-DD)
+    df['dob_date'] = pd.to_datetime(df['dob_date'], errors='coerce').dt.strftime('%Y-%m-%d')
+
+    # E. Casteo explícito de tipos numéricos
+    df['age'] = pd.to_numeric(df['age'], errors='coerce').fillna(0).astype(int)
+    df['latitude'] = pd.to_numeric(df['latitude'], errors='coerce')
+    df['longitude'] = pd.to_numeric(df['longitude'], errors='coerce')
+
+    print(f"Registros procesados y limpios: {len(df)}")
+
+    stg_file_name = raw_file_name.replace("RAW_", "STG_")
+
+    csv_buffer = io.BytesIO()
+    df.to_csv(csv_buffer, index=False, encoding='utf-8')
+    csv_buffer.seek(0)
+
+    s3_client.upload_fileobj(csv_buffer, BUCKET_STAGING, stg_file_name)
+    print(f"Archivo guardado en {BUCKET_STAGING}/{stg_file_name}")
+
+    TXT_PATH.write_text(stg_file_name, encoding="utf-8")
+    print(f"Nombre guardado en {TXT_PATH}: {stg_file_name}")
+    return True
+
 
 dag = DAG(
-    'data_transformation_dag',
-    description='DAG para transformar datos y cargarlos en MinIO',
+    'dag_transformacion',
+    description='DAG para transformar datos y particionarlos en MinIO',
     schedule=None,
-    start_date=datetime(2023, 1, 1),
+    start_date=datetime(2026, 8, 27),
     catchup=False,
 )
 
-transform_and_save_task = PythonOperator(
-    task_id='transform_and_save_to_datalake',
-    python_callable=transform_and_save_to_datalake,
+tarea_transformacion = PythonOperator(
+    task_id='transformacion',
+    python_callable=transformar_datos,
     dag=dag,
 )
 
-transform_and_save_task
+# tarea_particion = PythonOperator(
+#     task_id='particion',
+#     python_callable=particionar_datos,
+#     dag=dag,
+# )
+
+tarea_transformacion
