@@ -2,6 +2,10 @@ services:
   postgresql-data:
     image: postgres:16
     container_name: data-db
+    command: >
+      postgres
+      -c shared_preload_libraries='pg_stat_statements'
+      -c pg_stat_statements.track=top
     env_file:
     - .env
     environment:
