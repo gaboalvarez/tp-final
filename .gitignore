@@ -3,4 +3,5 @@ __pycache__/
 logs
 dags/last_execution.txt
 **/last_execution.txt
+**/last_execution_books.txt
 docker-volume/
